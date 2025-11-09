@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 
-df = pd.read_csv("/Users/ana/Desktop/basura/university_student_data.csv")
+df = pd.read_csv("university_student_data.csv")
 
 st.set_page_config(
     page_title="DATA VISUALIZATION AND DASHBOARD DEPLOYMENT",
