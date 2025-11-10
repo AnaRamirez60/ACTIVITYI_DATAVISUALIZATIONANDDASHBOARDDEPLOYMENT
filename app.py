@@ -1,13 +1,71 @@
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 
-df = pd.read_csv("university_student_data.csv")
+#  Carga de datos y preprocesamiento con caché 
+# Usamos st.cache_data para que esta función solo se ejecute una vez.
 
+@st.cache_data
+def load_data():
+    """Carga los datos desde el archivo CSV."""
+    df = pd.read_csv("university_student_data.csv")
+    return df
+
+@st.cache_data
+def process_data(df):
+    """Realiza las transformaciones de 'melting' una sola vez."""
+    id_cols = ['Year', 'Term']
+    
+    # Columnas de enrollment por departamento
+    enrolled_cols = ['Engineering Enrolled', 'Business Enrolled', 'Arts Enrolled', 'Science Enrolled']
+    
+    # Enrollment
+    df_enrollment = df.melt(
+        id_vars=id_cols,
+        value_vars=enrolled_cols,
+        var_name='Department',
+        value_name='Enrollment'
+    )
+    df_enrollment['Department'] = df_enrollment['Department'].str.replace(' Enrolled', '')
+    
+    # Retention
+    df_retention_base = df.melt(
+        id_vars=id_cols,
+        value_vars=['Retention Rate (%)'],  
+        var_name='Metric',
+        value_name='Retention Rate'
+    )
+    retention_expanded = []
+    for dept in ['Engineering', 'Business', 'Arts', 'Science']:
+        temp_df = df_retention_base.copy()
+        temp_df['Department'] = dept
+        retention_expanded.append(temp_df)
+    df_retention = pd.concat(retention_expanded, ignore_index=True).drop(columns=['Metric'])
+    
+    # Satisfaction 
+    df_satisfaction_base = df.melt(
+        id_vars=id_cols,
+        value_vars=['Student Satisfaction (%)'],  
+        var_name='Metric',
+        value_name='Satisfaction Score'
+    )
+    satisfaction_expanded = []
+    for dept in ['Engineering', 'Business', 'Arts', 'Science']:
+        temp_df = df_satisfaction_base.copy()
+        temp_df['Department'] = dept
+        satisfaction_expanded.append(temp_df)
+    df_satisfaction = pd.concat(satisfaction_expanded, ignore_index=True).drop(columns=['Metric'])
+    
+    return df_enrollment, df_retention, df_satisfaction
+
+# Cargar y preprocesar los datos
+df = load_data()
+df_enrollment, df_retention, df_satisfaction = process_data(df)
+
+
+# Configuración y Título
 st.set_page_config(
     page_title="DATA VISUALIZATION AND DASHBOARD DEPLOYMENT",
     layout="wide"
@@ -17,7 +75,7 @@ st.set_page_config(
 st.title("DATA VISUALIZATION AND DASHBOARD DEPLOYMENT")
 st.markdown("Analisis y visualización de datos de estudiantes universitarios")
 
-# Analisis exploratorio del dataset
+# Análisis exploratorio del dataset
 st.header("Analisis exploratorio del dataset")
 
 with st.expander("Analisis exploratorio del dataset"):
@@ -51,54 +109,7 @@ with st.expander("Analisis exploratorio del dataset"):
     st.subheader("Primeras 5 Filas")
     st.dataframe(df.head())
 
-# Preprocesar datos 
-def process_data(df):
-    id_cols = ['Year', 'Term']
-    
-    # Columnas de enrollment por departamento
-    enrolled_cols = ['Engineering Enrolled', 'Business Enrolled', 'Arts Enrolled', 'Science Enrolled']
-    
-    df_enrollment = df.melt(
-        id_vars=id_cols,
-        value_vars=enrolled_cols,
-        var_name='Department',
-        value_name='Enrollment'
-    )
-    df_enrollment['Department'] = df_enrollment['Department'].str.replace(' Enrolled', '')
-    
-    df_retention = df.melt(
-        id_vars=id_cols,
-        value_vars=['Retention Rate (%)'],  
-        var_name='Department',
-        value_name='Retention Rate'
-    )
-    # Crear una fila por cada departamento con la misma tasa de retención
-    retention_expanded = []
-    for dept in ['Engineering', 'Business', 'Arts', 'Science']:
-        temp_df = df_retention.copy()
-        temp_df['Department'] = dept
-        retention_expanded.append(temp_df)
-    df_retention = pd.concat(retention_expanded, ignore_index=True)
-    
-    df_satisfaction = df.melt(
-        id_vars=id_cols,
-        value_vars=['Student Satisfaction (%)'],  
-        var_name='Department',
-        value_name='Satisfaction Score'
-    )
-    # Crear una fila por cada departamento con la misma satisfacción
-    satisfaction_expanded = []
-    for dept in ['Engineering', 'Business', 'Arts', 'Science']:
-        temp_df = df_satisfaction.copy()
-        temp_df['Department'] = dept
-        satisfaction_expanded.append(temp_df)
-    df_satisfaction = pd.concat(satisfaction_expanded, ignore_index=True)
-    
-    return df_enrollment, df_retention, df_satisfaction
-
-df_enrollment, df_retention, df_satisfaction = process_data(df)
-
-# Filtros
+# Filtros slidebar
 st.sidebar.header("Filtros")
 
 # Filtro por año
@@ -125,8 +136,9 @@ selected_departments = st.sidebar.multiselect(
     default=available_departments
 )
 
-# Filtrar datos
+# Función de filtrado
 def filter_data(df, years, terms, departments):
+    """Aplica los filtros a los dataframes largos (enrollment, retention, satisfaction)."""
     filtered_df = df[
         (df['Year'].isin(years)) & 
         (df['Term'].isin(terms)) &
@@ -134,13 +146,14 @@ def filter_data(df, years, terms, departments):
     ]
     return filtered_df
 
+# Aplicar filtros
+# Esta parte se ejecuta en cada interacción del filtro, usando los dataframes cacheados.
 filtered_enrollment = filter_data(df_enrollment, selected_years, selected_terms, selected_departments)
 filtered_retention = filter_data(df_retention, selected_years, selected_terms, selected_departments)
 filtered_satisfaction = filter_data(df_satisfaction, selected_years, selected_terms, selected_departments)
 
-# Visualizaciones
-
 # KPI
+
 st.header("KPI")
 
 col1, col2, col3, col4 = st.columns(4)
@@ -150,12 +163,14 @@ with col1:
     st.metric("Total Estudiantes Inscritos", f"{total_enrollment:,}")
 
 with col2:
-    avg_retention = filtered_retention['Retention Rate'].mean()
-    st.metric("Tasa de Retención Promedio", f"{avg_retention:.1f}%")
+    # Usar .dropna() para evitar errores si no hay datos
+    avg_retention = filtered_retention['Retention Rate'].dropna().mean()
+    st.metric("Tasa de Retención Promedio", f"{avg_retention:.1f}%" if not pd.isna(avg_retention) else "N/A")
 
 with col3:
-    avg_satisfaction = filtered_satisfaction['Satisfaction Score'].mean()
-    st.metric("Satisfacción Promedio", f"{avg_satisfaction:.1f}%")
+    # Usar .dropna() para evitar errores si no hay datos
+    avg_satisfaction = filtered_satisfaction['Satisfaction Score'].dropna().mean()
+    st.metric("Satisfacción Promedio", f"{avg_satisfaction:.1f}%" if not pd.isna(avg_satisfaction) else "N/A")
 
 with col4:
     spring_enrollment = filtered_enrollment[filtered_enrollment['Term'] == 'Spring']['Enrollment'].sum()
@@ -164,6 +179,8 @@ with col4:
     if total_enrollment_term > 0:
         spring_ratio = (spring_enrollment / total_enrollment_term) * 100
         st.metric("Ratio Spring/Fall", f"{spring_ratio:.1f}%")
+    else:
+        st.metric("Ratio Spring/Fall", "N/A")
 
 # Enrollment con Retention
 col1, col2 = st.columns(2)
@@ -171,34 +188,41 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Estudiantes Inscritos por Departamento")
     
-    enrollment_by_year_dept = filtered_enrollment.groupby(['Year', 'Department'])['Enrollment'].sum().reset_index()
-    
-    fig_enrollment = px.bar(
-        enrollment_by_year_dept,
-        x='Year',
-        y='Enrollment',
-        color='Department',
-        barmode='group',
-        title="Estudiantes Inscritos por Departamento y Año"
-    )
-    fig_enrollment.update_layout(xaxis_type='category')
-    st.plotly_chart(fig_enrollment, use_container_width=True)
+    # Solo agrupar si hay datos
+    if not filtered_enrollment.empty:
+        enrollment_by_year_dept = filtered_enrollment.groupby(['Year', 'Department'])['Enrollment'].sum().reset_index()
+        
+        fig_enrollment = px.bar(
+            enrollment_by_year_dept,
+            x='Year',
+            y='Enrollment',
+            color='Department',
+            barmode='group',
+            title="Estudiantes Inscritos por Departamento y Año"
+        )
+        fig_enrollment.update_layout(xaxis_type='category')
+        st.plotly_chart(fig_enrollment, use_container_width=True)
+    else:
+        st.info("No hay datos de inscripción para los filtros seleccionados.")
 
 with col2:
     st.subheader("Tasas de Retención por Departamento")
     
-    retention_trends = filtered_retention.groupby(['Year', 'Department'])['Retention Rate'].mean().reset_index()
-    
-    fig_retention = px.line(
-        retention_trends,
-        x='Year',
-        y='Retention Rate',
-        color='Department',
-        title='Tendencias de Tasa de Retención',
-        markers=True
-    )
-    fig_retention.update_layout(yaxis_title="Tasa de Retención (%)")
-    st.plotly_chart(fig_retention, use_container_width=True)
+    if not filtered_retention.empty:
+        retention_trends = filtered_retention.groupby(['Year', 'Department'])['Retention Rate'].mean().reset_index()
+        
+        fig_retention = px.line(
+            retention_trends,
+            x='Year',
+            y='Retention Rate',
+            color='Department',
+            title='Tendencias de Tasa de Retención',
+            markers=True
+        )
+        fig_retention.update_layout(yaxis_title="Tasa de Retención (%)")
+        st.plotly_chart(fig_retention, use_container_width=True)
+    else:
+        st.info("No hay datos de retención para los filtros seleccionados.")
 
 # Satisfacción y comparación de trimestres
 col1, col2 = st.columns(2)
@@ -206,32 +230,38 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Puntuaciones de Satisfacción Estudiantil")
 
-    satisfaction_by_year_dept = filtered_satisfaction.groupby(['Year', 'Department'])['Satisfaction Score'].mean().reset_index()
-    
-    fig_satisfaction = px.line(
-        satisfaction_by_year_dept,
-        x='Year',
-        y='Satisfaction Score',
-        color='Department',
-        title='Tendencias de Satisfacción Estudiantil',
-        markers=True
-    )
-    fig_satisfaction.update_layout(yaxis_title="Satisfacción (%)")
-    st.plotly_chart(fig_satisfaction, use_container_width=True)
+    if not filtered_satisfaction.empty:
+        satisfaction_by_year_dept = filtered_satisfaction.groupby(['Year', 'Department'])['Satisfaction Score'].mean().reset_index()
+        
+        fig_satisfaction = px.line(
+            satisfaction_by_year_dept,
+            x='Year',
+            y='Satisfaction Score',
+            color='Department',
+            title='Tendencias de Satisfacción Estudiantil',
+            markers=True
+        )
+        fig_satisfaction.update_layout(yaxis_title="Satisfacción (%)")
+        st.plotly_chart(fig_satisfaction, use_container_width=True)
+    else:
+        st.info("No hay datos de satisfacción para los filtros seleccionados.")
 
 with col2:
     st.subheader("Comparación de Trimestres: Primavera vs Otoño")
 
-    term_enrollment = filtered_enrollment.groupby('Term')['Enrollment'].sum().reset_index()
-    
-    fig_term = px.pie(
-        term_enrollment,
-        values='Enrollment',
-        names='Term',
-        hole=0.4,
-        title='Distribución de Inscripciones: Spring vs Fall'
-    )
-    st.plotly_chart(fig_term, use_container_width=True)
+    if not filtered_enrollment.empty:
+        term_enrollment = filtered_enrollment.groupby('Term')['Enrollment'].sum().reset_index()
+        
+        fig_term = px.pie(
+            term_enrollment,
+            values='Enrollment',
+            names='Term',
+            hole=0.4,
+            title='Distribución de Inscripciones: Spring vs Fall'
+        )
+        st.plotly_chart(fig_term, use_container_width=True)
+    else:
+        st.info("No hay datos de inscripción por trimestre para los filtros seleccionados.")
 
 # Análisis adicional
 st.header("Análisis Comparativo")
@@ -239,73 +269,85 @@ st.header("Análisis Comparativo")
 tab1, tab2, tab3 = st.tabs(["Retención por Trimestre", "Satisfacción por Trimestre", "Evolución General"])
 
 with tab1:
-    retention_by_term = filtered_retention.groupby(['Term', 'Department'])['Retention Rate'].mean().reset_index()
-    fig_retention_term = px.bar(
-        retention_by_term,
-        x='Department',
-        y='Retention Rate',
-        color='Term',
-        barmode='group',
-        title='Tasa de Retención por Departamento y Trimestre'
-    )
-    fig_retention_term.update_layout(yaxis_title="Tasa de Retención (%)")
-    st.plotly_chart(fig_retention_term, use_container_width=True)
+    if not filtered_retention.empty:
+        retention_by_term = filtered_retention.groupby(['Term', 'Department'])['Retention Rate'].mean().reset_index()
+        fig_retention_term = px.bar(
+            retention_by_term,
+            x='Department',
+            y='Retention Rate',
+            color='Term',
+            barmode='group',
+            title='Tasa de Retención por Departamento y Trimestre'
+        )
+        fig_retention_term.update_layout(yaxis_title="Tasa de Retención (%)")
+        st.plotly_chart(fig_retention_term, use_container_width=True)
+    else:
+        st.info("No hay datos para la Retención por Trimestre.")
 
 with tab2:
-    satisfaction_by_term = filtered_satisfaction.groupby(['Term', 'Department'])['Satisfaction Score'].mean().reset_index()
-    fig_satisfaction_term = px.bar(
-        satisfaction_by_term,
-        x='Department',
-        y='Satisfaction Score',
-        color='Term',
-        barmode='group',
-        title='Satisfacción por Departamento y Trimestre'
-    )
-    fig_satisfaction_term.update_layout(yaxis_title="Satisfacción (%)")
-    st.plotly_chart(fig_satisfaction_term, use_container_width=True)
+    if not filtered_satisfaction.empty:
+        satisfaction_by_term = filtered_satisfaction.groupby(['Term', 'Department'])['Satisfaction Score'].mean().reset_index()
+        fig_satisfaction_term = px.bar(
+            satisfaction_by_term,
+            x='Department',
+            y='Satisfaction Score',
+            color='Term',
+            barmode='group',
+            title='Satisfacción por Departamento y Trimestre'
+        )
+        fig_satisfaction_term.update_layout(yaxis_title="Satisfacción (%)")
+        st.plotly_chart(fig_satisfaction_term, use_container_width=True)
+    else:
+        st.info("No hay datos para la Satisfacción por Trimestre.")
 
 with tab3:
-    # Evolución de todas las métricas
-    fig_evolution = go.Figure()
-    
-    # Agregar enrollment
-    enrollment_evolution = filtered_enrollment.groupby('Year')['Enrollment'].sum().reset_index()
-    fig_evolution.add_trace(go.Scatter(
-        x=enrollment_evolution['Year'],
-        y=enrollment_evolution['Enrollment'],
-        name='Total Inscritos',
-        line=dict(color='blue')
-    ))
-    
-    # Agregar retención
-    retention_evolution = filtered_retention.groupby('Year')['Retention Rate'].mean().reset_index()
-    fig_evolution.add_trace(go.Scatter(
-        x=retention_evolution['Year'],
-        y=retention_evolution['Retention Rate'],
-        name='Retención (%)',
-        line=dict(color='green'),
-        yaxis='y2'
-    ))
-    
-    # Agregar satisfacción
-    satisfaction_evolution = filtered_satisfaction.groupby('Year')['Satisfaction Score'].mean().reset_index()
-    fig_evolution.add_trace(go.Scatter(
-        x=satisfaction_evolution['Year'],
-        y=satisfaction_evolution['Satisfaction Score'],
-        name='Satisfacción (%)',
-        line=dict(color='orange'),
-        yaxis='y2'
-    ))
-    
-    fig_evolution.update_layout(
-        title='Evolución de Todas las Métricas',
-        xaxis=dict(title='Año'),
-        yaxis=dict(title='Total Inscritos', side='left'),
-        yaxis2=dict(title='Porcentaje (%)', side='right', overlaying='y'),
-        showlegend=True
-    )
-    
-    st.plotly_chart(fig_evolution, use_container_width=True)
+    if not filtered_enrollment.empty or not filtered_retention.empty or not filtered_satisfaction.empty:
+        # Evolución de todas las métricas
+        fig_evolution = go.Figure()
+        
+        # Agregar enrollment
+        if not filtered_enrollment.empty:
+            enrollment_evolution = filtered_enrollment.groupby('Year')['Enrollment'].sum().reset_index()
+            fig_evolution.add_trace(go.Scatter(
+                x=enrollment_evolution['Year'],
+                y=enrollment_evolution['Enrollment'],
+                name='Total Inscritos',
+                line=dict(color='blue')
+            ))
+        
+        # Agregar retención
+        if not filtered_retention.empty:
+            retention_evolution = filtered_retention.groupby('Year')['Retention Rate'].mean().reset_index()
+            fig_evolution.add_trace(go.Scatter(
+                x=retention_evolution['Year'],
+                y=retention_evolution['Retention Rate'],
+                name='Retención (%)',
+                line=dict(color='green'),
+                yaxis='y2'
+            ))
+        
+        # Agregar satisfacción
+        if not filtered_satisfaction.empty:
+            satisfaction_evolution = filtered_satisfaction.groupby('Year')['Satisfaction Score'].mean().reset_index()
+            fig_evolution.add_trace(go.Scatter(
+                x=satisfaction_evolution['Year'],
+                y=satisfaction_evolution['Satisfaction Score'],
+                name='Satisfacción (%)',
+                line=dict(color='orange'),
+                yaxis='y2'
+            ))
+        
+        fig_evolution.update_layout(
+            title='Evolución de Todas las Métricas',
+            xaxis=dict(title='Año'),
+            yaxis=dict(title='Total Inscritos', side='left'),
+            yaxis2=dict(title='Porcentaje (%)', side='right', overlaying='y'),
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_evolution, use_container_width=True)
+    else:
+        st.info("No hay datos para la Evolución General.")
 
 # Data Summary
 st.header("Resumen de Datos")
